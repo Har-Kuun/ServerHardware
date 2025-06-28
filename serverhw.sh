@@ -766,7 +766,6 @@ generate_summary() {
     echo -e "--------------------------------------------------"
     printf "%-15s: %s\n" "Model" "$CPU_MODEL"
     printf "%-15s: %s Socket(s), %s Cores, %s Threads\n" "Topology" "$SOCKETS" "$TOTAL_PHYSICAL_CORES" "$TOTAL_THREADS"
-    printf "%-15s: %s GHz\n" "Frequency" "$CPU_FREQ_GHZ"
     echo -e "--------------------------------------------------\n"
 
     # --- RAM Info ---
