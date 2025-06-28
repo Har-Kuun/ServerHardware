@@ -12,7 +12,7 @@ wget -qO- https://raw.githubusercontent.com/Har-Kuun/ServerHardware/refs/heads/m
 ```
 or
 ```
-curl -Lso https://raw.githubusercontent.com/Har-Kuun/ServerHardware/refs/heads/main/serverhw.sh | bash
+curl -Lso- https://raw.githubusercontent.com/Har-Kuun/ServerHardware/refs/heads/main/serverhw.sh | bash
 ```
 
 ## Features
