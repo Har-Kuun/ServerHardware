@@ -7,6 +7,7 @@
 #    Thank you for using this script.                    #
 ##########################################################
 
+# Script adapted from https://github.com/Yuri-NagaSaki/Bash/blob/main/hardware_info_script.sh
 
 # Display hardware information (for Debian/Ubuntu/CentOS)
 # This script requires root privilege
