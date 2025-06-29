@@ -27,6 +27,8 @@ NC='\033[0m' # No Color
     echo '*       Thank you for using this script.                  *'
     echo '***********************************************************'
     echo 
+    echo '# This script was adapted from https://github.com/Yuri-NagaSaki/Bash/blob/main/hardware_info_script.sh'
+    echo 
 
 # Check root user
 if [ "$(id -u)" -ne 0 ]; then
