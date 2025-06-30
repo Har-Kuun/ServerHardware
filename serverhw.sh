@@ -112,7 +112,7 @@ get_system_info() {
         echo "=============================================="
         echo "hostname: $(hostname -f)"
         echo "OS: $(cat /etc/os-release | grep "PRETTY_NAME" | cut -d= -f2 | tr -d \")"
-        echo "Kernal Version: $(uname -r)"
+        echo "Kernel Version: $(uname -r)"
         echo "Architecture: $(uname -m)"
         echo "System Time: $(date)"
         echo "Start Time: $(uptime -s)"
