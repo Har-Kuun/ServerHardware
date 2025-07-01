@@ -736,7 +736,7 @@ generate_summary() {
     SYS_PRODUCT=$(dmidecode -s system-product-name)
     echo -e "System Info"
     echo -e "--------------------------------------------------"
-    printf "%-15s: %s\n" "System" "$SYS_VENDOR $SYS_PRODUCT"
+    printf "%-15s: %s %s\n" "System" "$SYS_VENDOR" "$SYS_PRODUCT"
 
     # --- BIOS Info ---
     BIOS_VENDOR=$(dmidecode -s bios-vendor)
@@ -759,7 +759,7 @@ generate_summary() {
     TOTAL_THREADS=$(lscpu | grep "^CPU(s):" | awk '{print $2}')
     
     CPU_FREQ_MHZ=$(lscpu | grep "CPU MHz:" | awk '{print $3}')
-    if [[ "$CPU_FREQ_MHZ" =~ ^[0-9.]+$ ]]; then
+    if echo "$CPU_FREQ_MHZ" | grep -Eq '^[0-9.]+$'; then
         CPU_FREQ_GHZ=$(printf "%.2f" $(echo "$CPU_FREQ_MHZ / 1000" | bc -l))
     else
         CPU_FREQ_GHZ="N/A"
@@ -780,34 +780,52 @@ generate_summary() {
     echo "------------------------------------------------------------------------------------------------------"
     printf "| %-7s | %-9s | %-13s | %-19s | %-14s | %-20s |\n" "Size" "Type" "Speed" "Configured Speed" "Manufacturer" "Part Number"
     echo "------------------------------------------------------------------------------------------------------"
-    dmidecode -t memory | grep -A20 "Memory Device" | awk -F': ' '
-    function print_row() {
-        if (size && size !~ /No Module/) {
-            gsub(/^[ \t]+|[ \t]+$/, "", size);
-            gsub(/^[ \t]+|[ \t]+$/, "", type);
-            gsub(/^[ \t]+|[ \t]+$/, "", speed);
-            gsub(/^[ \t]+|[ \t]+$/, "", clock);
-            gsub(/^[ \t]+|[ \t]+$/, "", manu);
-            gsub(/^[ \t]+|[ \t]+$/, "", part);
-            printf "| %-7s | %-9s | %-13s | %-19s | %-14s | %-20s |\n", size, type, speed, clock, manu, part;
+    dmidecode -t memory | awk '
+    function print_module_info() {
+        if (size != "N/A" && size !~ /No Module/ && size !~ /Not Specified/) {
+            printf "| %-7s | %-9s | %-13s | %-19s | %-14s | %-20s |\n", size, type, speed, clock, manu, part
         }
     }
-    /Memory Device/ { if (size) print_row(); size=type=speed=clock=manu=part=""; }
-    /^\s+Size:/ { size = $2; }
-    /^\s+Type:/ { type = $2; }
-    /^\s+Speed:/ { speed = $2; }
-    /^\s+Configured Memory Speed:/ { clock = $2; }
-    /^\s+Configured Clock Speed:/ { if (!clock) clock = $2; }
-    /^\s+Manufacturer:/ { manu = $2; }
-    /^\s+Part Number:/ { part = $2; }
-    END { print_row(); }' | grep -v "No Module"
+    
+    /Memory Device/ {
+        if (in_device) {
+            print_module_info()
+        }
+        in_device = 1
+        size = type = speed = clock = manu = part = "N/A"
+    }
+
+    in_device && !/Memory Device/ {
+        p = index($0, ":")
+        if (p > 0) {
+            key = substr($0, 1, p - 1)
+            value = substr($0, p + 1)
+            
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", key)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", value)
+            
+            if (key == "Size") size = value
+            if (key == "Type") type = value
+            if (key == "Speed") speed = value
+            if (key == "Configured Memory Speed" || key == "Configured Clock Speed") clock = value
+            if (key == "Manufacturer") manu = value
+            if (key == "Part Number") part = value
+        }
+    }
+    
+    END {
+        if (in_device) {
+            print_module_info()
+        }
+    }
+'
     echo -e "------------------------------------------------------------------------------------------------------\n"
 
     # --- Disk Info ---
     echo -e "Disk Info"
-    echo "------------------------------------------------------------------------------------------------------------------------"
-    printf "| %-8s | %-8s | %-30s | %-15s | %-15s | %-15s |\n" "Name" "Size" "Model" "Power On Hours" "Data Read (GB)" "Data Written (GB)"
-    echo "------------------------------------------------------------------------------------------------------------------------"
+    echo "-------------------------------------------------------------------------------------------------------------------------------------------------"
+    printf "| %-8s | %-8s | %-30s | %-15s | %-15s | %-17s | %-12s | %-15s |\n" "Name" "Size" "Model" "Power On Hours" "Data Read (GB)" "Data Written (GB)" "Realloc Sect" "SMART Status"
+    echo "-------------------------------------------------------------------------------------------------------------------------------------------------"
     DISKS=$(lsblk -d -n -o NAME,TRAN | grep -v "loop" | awk '{print $1}')
     for DISK in $DISKS; do
         SIZE=$(lsblk -d -n -o SIZE /dev/$DISK)
@@ -817,36 +835,74 @@ generate_summary() {
         POWER_ON_HOURS="N/A"
         DATA_READ_GB="N/A"
         DATA_WRITTEN_GB="N/A"
+        REALLOC_SECTORS="N/A"
+        SMART_ERRORS="N/A"
 
         if command -v smartctl > /dev/null && command -v bc > /dev/null; then
             SMART_OUTPUT=$(smartctl -a /dev/$DISK 2>/dev/null)
-            POWER_ON_HOURS=$(echo "$SMART_OUTPUT" | grep -i "Power.On.Hours" | awk '{print $NF}')
-            [ -z "$POWER_ON_HOURS" ] && POWER_ON_HOURS="N/A"
-            
-            if [[ $TRANSPORT == "nvme" ]]; then
-                DATA_READ=$(echo "$SMART_OUTPUT" | grep "Data Units Read" | awk -F: '{print $2}' | tr -d ' ,' | sed 's/\[.*//')
-                DATA_WRITTEN=$(echo "$SMART_OUTPUT" | grep "Data Units Written" | awk -F: '{print $2}' | tr -d ' ,' | sed 's/\[.*//')
-                if [[ "$DATA_READ" =~ ^[0-9]+$ ]]; then
-                    DATA_READ_GB=$(echo "scale=2; $DATA_READ * 1000 * 512 / (1024*1024*1024)" | bc)
+            if [ -n "$SMART_OUTPUT" ]; then
+                POWER_ON_HOURS=$(echo "$SMART_OUTPUT" | grep -i "Power.On.Hours" | awk '{print $NF}')
+                [ -z "$POWER_ON_HOURS" ] && POWER_ON_HOURS="N/A"
+                
+                # Get Reallocated Sector Count for HDDs
+                if [[ $TRANSPORT == "sata" ]]; then
+                    IS_SSD=$(echo "$SMART_OUTPUT" | grep -i "Rotation Rate:.*Solid State")
+                    if [ -z "$IS_SSD" ]; then # This is likely an HDD
+                        REALLOC_VALUE=$(echo "$SMART_OUTPUT" | grep -i "Reallocated.*Sector.*Ct" | awk '{print $NF}')
+                        [[ "$REALLOC_VALUE" =~ ^[0-9]+$ ]] && REALLOC_SECTORS=$REALLOC_VALUE
+                    fi
                 fi
-                if [[ "$DATA_WRITTEN" =~ ^[0-9]+$ ]]; then
-                    DATA_WRITTEN_GB=$(echo "scale=2; $DATA_WRITTEN * 1000 * 512 / (1024*1024*1024)" | bc)
+                
+                # List out SMART errors
+                OVERALL_HEALTH=$(echo "$SMART_OUTPUT" | grep -i "SMART overall-health" | awk -F': ' '{print $2}' | tr -d ' ')
+                if [[ "$OVERALL_HEALTH" != "PASSED" && -n "$OVERALL_HEALTH" ]]; then
+                    SMART_ERRORS="$OVERALL_HEALTH"
+                else
+                    ERROR_LIST=""
+                    PENDING=$(echo "$SMART_OUTPUT" | grep -i "Current_Pending_Sector" | awk '{print $NF}')
+                    UNCORRECTABLE=$(echo "$SMART_OUTPUT" | grep -i "Offline_Uncorrectable" | awk '{print $NF}')
+                    
+                    if [[ "$PENDING" =~ ^[0-9]+$ && "$PENDING" -gt 0 ]]; then
+                        ERROR_LIST+="Pending:${PENDING} "
+                    fi
+                    
+                    if [[ "$UNCORRECTABLE" =~ ^[0-9]+$ && "$UNCORRECTABLE" -gt 0 ]]; then
+                        ERROR_LIST+="Uncorrect:${UNCORRECTABLE}"
+                    fi
+
+                    if [ -z "$ERROR_LIST" ]; then
+                        SMART_ERRORS="OK"
+                    else
+                        SMART_ERRORS=$(echo "$ERROR_LIST" | sed 's/ *$//')
+                    fi
                 fi
-            elif [[ $TRANSPORT == "sata" ]]; then
-                DATA_READ=$(echo "$SMART_OUTPUT" | grep "Total_LBAs_Read" | awk '{print $NF}')
-                DATA_WRITTEN=$(echo "$SMART_OUTPUT" | grep "Total_LBAs_Written" | awk '{print $NF}')
-                 if [[ "$DATA_READ" =~ ^[0-9]+$ ]]; then
-                    DATA_READ_GB=$(echo "scale=2; $DATA_READ * 512 / (1024*1024*1024)" | bc)
-                fi
-                if [[ "$DATA_WRITTEN" =~ ^[0-9]+$ ]]; then
-                    DATA_WRITTEN_GB=$(echo "scale=2; $DATA_WRITTEN * 512 / (1024*1024*1024)" | bc)
+
+                # Data Read/Written calculation
+                if [[ $TRANSPORT == "nvme" ]]; then
+                    DATA_READ=$(echo "$SMART_OUTPUT" | grep "Data Units Read" | awk -F: '{print $2}' | tr -d ' ,' | sed 's/\[.*//')
+                    DATA_WRITTEN=$(echo "$SMART_OUTPUT" | grep "Data Units Written" | awk -F: '{print $2}' | tr -d ' ,' | sed 's/\[.*//')
+                    if [[ "$DATA_READ" =~ ^[0-9]+$ ]]; then
+                        DATA_READ_GB=$(echo "scale=2; $DATA_READ * 1000 * 512 / (1024*1024*1024)" | bc)
+                    fi
+                    if [[ "$DATA_WRITTEN" =~ ^[0-9]+$ ]]; then
+                        DATA_WRITTEN_GB=$(echo "scale=2; $DATA_WRITTEN * 1000 * 512 / (1024*1024*1024)" | bc)
+                    fi
+                elif [[ $TRANSPORT == "sata" ]]; then
+                    DATA_READ=$(echo "$SMART_OUTPUT" | grep "Total_LBAs_Read" | awk '{print $NF}')
+                    DATA_WRITTEN=$(echo "$SMART_OUTPUT" | grep "Total_LBAs_Written" | awk '{print $NF}')
+                     if [[ "$DATA_READ" =~ ^[0-9]+$ ]]; then
+                        DATA_READ_GB=$(echo "scale=2; $DATA_READ * 512 / (1024*1024*1024)" | bc)
+                    fi
+                    if [[ "$DATA_WRITTEN" =~ ^[0-9]+$ ]]; then
+                        DATA_WRITTEN_GB=$(echo "scale=2; $DATA_WRITTEN * 512 / (1024*1024*1024)" | bc)
+                    fi
                 fi
             fi
         fi
         
-        printf "| %-8s | %-8s | %-30.30s | %-15s | %-15s | %-15s |\n" "$DISK" "$SIZE" "$MODEL" "$POWER_ON_HOURS" "$DATA_READ_GB" "$DATA_WRITTEN_GB"
+        printf "| %-8s | %-8s | %-30.30s | %-15s | %-15s | %-17s | %-12s | %-15s |\n" "$DISK" "$SIZE" "$MODEL" "$POWER_ON_HOURS" "$DATA_READ_GB" "$DATA_WRITTEN_GB" "$REALLOC_SECTORS" "$SMART_ERRORS"
     done
-    echo -e "------------------------------------------------------------------------------------------------------------------------\n"
+    echo -e "-------------------------------------------------------------------------------------------------------------------------------------------------\n"
     
     # --- RAID Info ---
     echo -e "RAID Info"
